@@ -25,6 +25,11 @@ import {
   Award,
   Check,
   Images,
+  Eye,
+  EyeOff,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
 } from 'lucide-react'
 import type { SidebarTab, CanvasPreset, LMStudioStatus, LayerItem, GeneratedDesignSpec } from '../../types'
 import { CANVAS_PRESETS, DESIGN_PALETTES } from '../../types'
@@ -41,7 +46,18 @@ interface SidebarProps {
   onAddRectangle: (opts?: any) => void
   onAddCircle: (opts?: any) => void
   onAddShape: (
-    shapeType: 'triangle' | 'star' | 'heart' | 'hexagon' | 'diamond' | 'arrow' | 'line' | 'dashed-line' | 'badge',
+    shapeType:
+      | 'triangle'
+      | 'star'
+      | 'heart'
+      | 'hexagon'
+      | 'diamond'
+      | 'arrow'
+      | 'curved-arrow'
+      | 'dashed-arrow'
+      | 'line'
+      | 'dashed-line'
+      | 'badge',
     color?: string
   ) => void
   onAddImage: (source: string | File | Blob) => void
@@ -50,6 +66,8 @@ interface SidebarProps {
   canvasBackgroundColor: string
   lmStudioStatus: LMStudioStatus
   layers: LayerItem[]
+  onSelectLayer: (zIndex: number) => void
+  onToggleLayerVisibility: (zIndex: number) => void
   onDeleteLayer: () => void
   onBringForward: () => void
   onSendBackward: () => void
@@ -183,6 +201,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   canvasBackgroundColor,
   lmStudioStatus,
   layers,
+  onSelectLayer,
+  onToggleLayerVisibility,
+  onDeleteLayer,
+  onBringForward,
+  onSendBackward,
   onOpenMagicWrite,
   onApplyGeneratedDesign,
   onRequestComfyGenerateImage,
@@ -1451,23 +1474,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
 
-            {/* Lines & CTA Buttons */}
+            {/* Lines, Vector Arrows & CTA Buttons */}
             <div className="space-y-2 pt-2 border-t border-slate-800">
-              <h4 className="text-slate-400 font-semibold text-xs">Linhas & Botões</h4>
+              <h4 className="text-slate-400 font-semibold text-xs">Linhas & Setas Vetoriais (Editáveis por Pontos)</h4>
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => onAddShape('line', '#94a3b8')}
-                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300"
+                  onClick={() => onAddShape('line', '#6366f1')}
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300 text-xs"
                 >
-                  <Minus className="w-4 h-4" />
+                  <Minus className="w-4 h-4 text-indigo-400" />
                   <span>Linha Sólida</span>
                 </button>
                 <button
-                  onClick={() => onAddShape('dashed-line', '#94a3b8')}
-                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300"
+                  onClick={() => onAddShape('dashed-line', '#38bdf8')}
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300 text-xs"
                 >
-                  <span className="font-mono font-bold">---</span>
-                  <span>Tracejada</span>
+                  <span className="font-mono font-bold text-sky-400">- - -</span>
+                  <span>Linha Tracejada</span>
+                </button>
+                <button
+                  onClick={() => onAddShape('curved-arrow', '#10b981')}
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300 text-xs"
+                >
+                  <ArrowRight className="w-4 h-4 text-emerald-400" />
+                  <span>Seta Curva (3 pts)</span>
+                </button>
+                <button
+                  onClick={() => onAddShape('dashed-arrow', '#f59e0b')}
+                  className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 flex items-center justify-center gap-1.5 text-slate-300 text-xs"
+                >
+                  <span className="font-mono font-bold text-amber-400">--&gt;</span>
+                  <span>Seta Tracejada</span>
                 </button>
               </div>
 
@@ -1742,7 +1779,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="p-4 space-y-4 overflow-y-auto">
             <div>
               <h3 className="font-bold text-white text-sm mb-1">Camadas da Página</h3>
-              <p className="text-slate-400 text-xs">Visualize todos os elementos do slide atual.</p>
+              <p className="text-slate-400 text-xs">
+                Clique em qualquer camada abaixo para selecionar o elemento diretamente no canvas.
+              </p>
             </div>
 
             {layers.length === 0 ? (
@@ -1753,17 +1792,87 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="space-y-1.5">
                 {layers.map((layer) => (
                   <div
-                    key={layer.id}
-                    className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 flex items-center justify-between hover:bg-slate-800 transition"
+                    key={`${layer.id}_${layer.zIndex}`}
+                    onClick={() => onSelectLayer(layer.zIndex)}
+                    title="Clique para selecionar este objeto no canvas"
+                    className={`group p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                      layer.selected
+                        ? 'bg-purple-600/25 border-purple-500 text-white shadow-md shadow-purple-500/10'
+                        : 'bg-slate-800/80 border-slate-700/80 hover:bg-slate-800 hover:border-slate-600 text-slate-200'
+                    } ${!layer.visible ? 'opacity-50' : ''}`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-2 h-2 rounded-full bg-purple-400 shrink-0" />
-                      <span className="font-medium text-slate-200 truncate">{layer.name}</span>
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          layer.selected ? 'bg-emerald-400 animate-pulse' : 'bg-purple-400'
+                        }`}
+                      />
+                      <span className="font-medium truncate text-xs">{layer.name}</span>
                     </div>
 
-                    <div className="flex items-center gap-2 text-slate-400">
-                      {layer.locked && <span className="text-[10px] text-amber-400">🔒</span>}
-                      <span className="text-[10px] font-mono text-slate-500">{layer.opacity}%</span>
+                    <div className="flex items-center gap-1 text-slate-400 shrink-0 ml-2">
+                      {layer.locked && (
+                        <span className="text-[10px] text-amber-400" title="Camada bloqueada">
+                          🔒
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono text-slate-500 mr-1">
+                        {layer.opacity}%
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onToggleLayerVisibility(layer.zIndex)
+                        }}
+                        className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                        title={layer.visible ? 'Ocultar camada' : 'Mostrar camada'}
+                      >
+                        {layer.visible ? (
+                          <Eye className="w-3.5 h-3.5" />
+                        ) : (
+                          <EyeOff className="w-3.5 h-3.5 text-rose-400" />
+                        )}
+                      </button>
+
+                      {layer.selected && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onBringForward()
+                            }}
+                            className="p-1 rounded hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                            title="Subir camada"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onSendBackward()
+                            }}
+                            className="p-1 rounded hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                            title="Descer camada"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDeleteLayer()
+                            }}
+                            className="p-1 rounded hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 transition"
+                            title="Excluir elemento selecionado"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}

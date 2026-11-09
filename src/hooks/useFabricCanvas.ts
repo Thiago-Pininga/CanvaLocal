@@ -1,8 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
-import type { LayerItem, GeneratedDesignSpec, DesignLayoutStyle, ImageFilterSettings, EditorialSlideSpec } from '../types'
+import type {
+  LayerItem,
+  GeneratedDesignSpec,
+  DesignLayoutStyle,
+  ImageFilterSettings,
+  EditorialSlideSpec,
+  VectorLineSettings,
+} from '../types'
 import type { SketchVectorType } from '../services/lmStudioService'
 import { classifyUploadedImages } from '../services/imageAnalysisService'
+import {
+  createVectorLineObject,
+  createCustomVectorLine,
+  rebuildVectorPathGeometry,
+  hydrateCanvasVectorLines,
+  computeVectorGeometry,
+} from '../utils/vectorLineUtils'
 
 export interface PageData {
   id: string
@@ -80,12 +94,20 @@ export function useFabricCanvas(options: CanvasOptions) {
   // Sync layer list
   const syncLayers = useCallback(() => {
     if (!fabricCanvas.current) return
-    const objects = fabricCanvas.current.getObjects()
+    const canvas = fabricCanvas.current
+    const activeObj = canvas.getActiveObject()
+    const objects = canvas.getObjects()
     const newLayers: LayerItem[] = objects
       .map((obj: any, index) => {
         let type: LayerItem['type'] = 'path'
         if (obj.type === 'image' || obj instanceof fabric.FabricImage) type = 'image'
-        else if (obj.type === 'i-text' || obj instanceof fabric.IText) type = 'text'
+        else if (
+          obj.type === 'i-text' ||
+          obj.type === 'textbox' ||
+          obj instanceof fabric.IText ||
+          obj instanceof fabric.Textbox
+        )
+          type = 'text'
         else if (obj.type === 'rect') type = 'rect'
         else if (obj.type === 'circle') type = 'circle'
         else if (obj.type === 'triangle') type = 'triangle'
@@ -98,9 +120,11 @@ export function useFabricCanvas(options: CanvasOptions) {
             type === 'image'
               ? 'Imagem'
               : type === 'text'
-              ? obj.text?.substring(0, 16) || 'Texto'
+              ? obj.text?.substring(0, 22) || 'Texto'
               : type === 'group'
               ? 'Grupo'
+              : type === 'rect'
+              ? 'Retângulo / Faixa'
               : 'Elemento'
           } ${index + 1}`
 
@@ -112,6 +136,7 @@ export function useFabricCanvas(options: CanvasOptions) {
           locked: Boolean(obj.lockMovementX),
           opacity: Math.round((obj.opacity ?? 1) * 100),
           zIndex: index,
+          selected: obj === activeObj,
         }
       })
       .reverse()
@@ -135,11 +160,15 @@ export function useFabricCanvas(options: CanvasOptions) {
     const handleSelection = () => {
       const active = canvas.getActiveObject()
       setSelectedObject(active || null)
+      syncLayers()
     }
 
     canvas.on('selection:created', handleSelection)
     canvas.on('selection:updated', handleSelection)
-    canvas.on('selection:cleared', () => setSelectedObject(null))
+    canvas.on('selection:cleared', () => {
+      setSelectedObject(null)
+      syncLayers()
+    })
 
     canvas.on('object:added', () => {
       syncLayers()
@@ -191,6 +220,7 @@ export function useFabricCanvas(options: CanvasOptions) {
       if (targetPage.json) {
         try {
           await canvas.loadFromJSON(JSON.parse(targetPage.json))
+          hydrateCanvasVectorLines(canvas)
         } catch (err) {
           console.warn('Erro ao alternar página:', err)
         }
@@ -299,6 +329,7 @@ export function useFabricCanvas(options: CanvasOptions) {
       canvas.backgroundColor = targetPage.backgroundColor || '#ffffff'
       if (targetPage.json) {
         await canvas.loadFromJSON(JSON.parse(targetPage.json))
+        hydrateCanvasVectorLines(canvas)
       }
       canvas.renderAll()
       syncLayers()
@@ -350,6 +381,16 @@ export function useFabricCanvas(options: CanvasOptions) {
     [pages, activePageIndex]
   )
 
+  // Rename a page title
+  const renamePage = useCallback((pageIndex: number, newTitle: string) => {
+    const trimmed = newTitle.trim()
+    setPages((prev) =>
+      prev.map((p, idx) =>
+        idx === pageIndex ? { ...p, title: trimmed || `Página ${pageIndex + 1}` } : p
+      )
+    )
+  }, [])
+
   // Undo & Redo
   const undo = useCallback(() => {
     if (!fabricCanvas.current || historyIndex.current <= 0) return
@@ -357,7 +398,10 @@ export function useFabricCanvas(options: CanvasOptions) {
     historyIndex.current -= 1
     const json = historyStack.current[historyIndex.current]
     fabricCanvas.current.loadFromJSON(JSON.parse(json)).then(() => {
-      fabricCanvas.current?.renderAll()
+      if (fabricCanvas.current) {
+        hydrateCanvasVectorLines(fabricCanvas.current)
+        fabricCanvas.current.renderAll()
+      }
       syncLayers()
       setCanUndo(historyIndex.current > 0)
       setCanRedo(historyIndex.current < historyStack.current.length - 1)
@@ -371,7 +415,10 @@ export function useFabricCanvas(options: CanvasOptions) {
     historyIndex.current += 1
     const json = historyStack.current[historyIndex.current]
     fabricCanvas.current.loadFromJSON(JSON.parse(json)).then(() => {
-      fabricCanvas.current?.renderAll()
+      if (fabricCanvas.current) {
+        hydrateCanvasVectorLines(fabricCanvas.current)
+        fabricCanvas.current.renderAll()
+      }
       syncLayers()
       setCanUndo(historyIndex.current > 0)
       setCanRedo(historyIndex.current < historyStack.current.length - 1)
@@ -438,10 +485,21 @@ export function useFabricCanvas(options: CanvasOptions) {
     canvas.renderAll()
   }, [])
 
-  // Add Rich Shapes (Triangle, Star, Heart, Hexagon, Diamond, Arrow, Line, Badge)
+  // Add Rich Shapes (Triangle, Star, Heart, Hexagon, Diamond, Arrow, Curved Arrow, Dashed Arrow, Line, Badge)
   const addShape = useCallback(
     (
-      shapeType: 'triangle' | 'star' | 'heart' | 'hexagon' | 'diamond' | 'arrow' | 'line' | 'dashed-line' | 'badge',
+      shapeType:
+        | 'triangle'
+        | 'star'
+        | 'heart'
+        | 'hexagon'
+        | 'diamond'
+        | 'arrow'
+        | 'curved-arrow'
+        | 'dashed-arrow'
+        | 'line'
+        | 'dashed-line'
+        | 'badge',
       color = '#8b5cf6'
     ) => {
       if (!fabricCanvas.current) return
@@ -534,45 +592,107 @@ export function useFabricCanvas(options: CanvasOptions) {
             scaleY: 0.45,
           }
         )
-      } else if (shapeType === 'arrow') {
-        const points = [
-          { x: -100, y: -25 },
-          { x: 20, y: -25 },
-          { x: 20, y: -60 },
-          { x: 100, y: 0 },
-          { x: 20, y: 60 },
-          { x: 20, y: 25 },
-          { x: -100, y: 25 },
-        ]
-        obj = new fabric.Polygon(points, {
-          left: cx,
-          top: cy,
-          originX: 'center',
-          originY: 'center',
-          fill: color,
-        })
-      } else if (shapeType === 'line' || shapeType === 'dashed-line') {
-        obj = new fabric.Rect({
-          left: cx,
-          top: cy,
-          originX: 'center',
-          originY: 'center',
-          width: 400,
-          height: 6,
-          fill: color,
-          rx: 3,
-          ry: 3,
-          strokeDashArray: shapeType === 'dashed-line' ? [15, 10] : undefined,
-        })
+      } else if (
+        shapeType === 'arrow' ||
+        shapeType === 'curved-arrow' ||
+        shapeType === 'dashed-arrow' ||
+        shapeType === 'line' ||
+        shapeType === 'dashed-line'
+      ) {
+        obj = createVectorLineObject(shapeType, cx, cy, color)
       }
 
       if (obj) {
         canvas.add(obj)
         canvas.setActiveObject(obj)
+        setSelectedObject(obj)
         canvas.renderAll()
       }
     },
     []
+  )
+
+  // Update vector line / arrow settings, add/remove vector control points, or adjust curvature & dash pattern
+  const updateVectorLine = useCallback(
+    (
+      actionOrSettings:
+        | Partial<VectorLineSettings>
+        | 'add-node'
+        | 'remove-node'
+        | 'straighten'
+        | 'curve-preset'
+    ) => {
+      if (!fabricCanvas.current || !selectedObject) return
+      const canvas = fabricCanvas.current
+      if (!(selectedObject instanceof fabric.Path)) return
+      const currentSettings = (selectedObject as any).customVectorLine as VectorLineSettings | undefined
+      if (!currentSettings || !currentSettings.isVectorLine) return
+
+      const next: VectorLineSettings = {
+        ...currentSettings,
+        nodes: currentSettings.nodes.map((pt) => ({ ...pt })),
+      }
+
+      if (actionOrSettings === 'add-node') {
+        // Find the longest segment and insert a new vector node right at its curve midpoint
+        const geom = computeVectorGeometry(next)
+        let bestSeg = 0
+        let maxDist = -1
+        for (let i = 0; i < next.nodes.length - 1; i++) {
+          const d = Math.hypot(
+            next.nodes[i + 1].x - next.nodes[i].x,
+            next.nodes[i + 1].y - next.nodes[i].y
+          )
+          if (d > maxDist) {
+            maxDist = d
+            bestSeg = i
+          }
+        }
+        const midPt = geom.midpoints[bestSeg] || {
+          x: (next.nodes[bestSeg].x + next.nodes[bestSeg + 1].x) / 2,
+          y: (next.nodes[bestSeg].y + next.nodes[bestSeg + 1].y) / 2 - 45,
+        }
+        // Offset slightly if currently completely straight so the user immediately sees the new curve handle
+        const wasStraight = Math.abs(next.curvature) < 2 && next.nodes.length === 2
+        if (wasStraight) {
+          const dx = next.nodes[1].x - next.nodes[0].x
+          const dy = next.nodes[1].y - next.nodes[0].y
+          const len = Math.max(1, Math.hypot(dx, dy))
+          midPt.x += (-dy / len) * 55
+          midPt.y += (dx / len) * 55
+          next.curvature = 100
+        } else if (next.curvature === 0) {
+          next.curvature = 100
+        }
+        next.nodes.splice(bestSeg + 1, 0, midPt)
+      } else if (actionOrSettings === 'remove-node') {
+        if (next.nodes.length > 2) {
+          // Remove last intermediate node (preserve start and end points)
+          next.nodes.splice(next.nodes.length - 2, 1)
+        }
+      } else if (actionOrSettings === 'straighten') {
+        next.curvature = 0
+        if (next.nodes.length > 2) {
+          const first = next.nodes[0]
+          const last = next.nodes[next.nodes.length - 1]
+          next.nodes = [first, last]
+        }
+      } else if (actionOrSettings === 'curve-preset') {
+        if (next.nodes.length === 2) {
+          next.curvature = next.curvature === 0 ? -45 : next.curvature > 0 ? -next.curvature : 0
+        } else {
+          next.curvature = next.curvature === 0 ? 100 : Math.min(200, next.curvature + 40)
+        }
+      } else {
+        Object.assign(next, actionOrSettings)
+      }
+
+      rebuildVectorPathGeometry(selectedObject, next)
+      canvas.requestRenderAll()
+      canvas.renderAll()
+      saveState()
+    },
+    [selectedObject, saveState]
   )
 
   // Add Image from URL or File
@@ -992,12 +1112,14 @@ export function useFabricCanvas(options: CanvasOptions) {
 
     const allPaths = canvas
       .getObjects()
-      .filter((o) => o.type === 'path') as fabric.Path[]
+      .filter((o) => o.type === 'path' && !(o as any).customVectorLine?.isVectorLine) as fabric.Path[]
 
     if (allPaths.length === 0) return null
 
     const targetPaths =
-      selectedObject && selectedObject.type === 'path'
+      selectedObject &&
+      selectedObject.type === 'path' &&
+      !(selectedObject as any).customVectorLine?.isVectorLine
         ? [selectedObject as fabric.Path]
         : allPaths
 
@@ -1149,11 +1271,13 @@ export function useFabricCanvas(options: CanvasOptions) {
       const targetH = info ? Math.max(120, info.height) : 240
       const color = info ? info.color : drawBrushColor || '#8b5cf6'
 
-      // Remove freehand path strokes
+      // Remove freehand path strokes (exclude vector lines)
       const pathsToRemove =
-        selectedObject && selectedObject.type === 'path'
+        selectedObject &&
+        selectedObject.type === 'path' &&
+        !(selectedObject as any).customVectorLine?.isVectorLine
           ? [selectedObject]
-          : canvas.getObjects().filter((o) => o.type === 'path')
+          : canvas.getObjects().filter((o) => o.type === 'path' && !(o as any).customVectorLine?.isVectorLine)
       pathsToRemove.forEach((p) => canvas.remove(p))
 
       // Turn off drawing mode so user can immediately interact with the new vector
@@ -1202,18 +1326,8 @@ export function useFabricCanvas(options: CanvasOptions) {
           ry: 14,
           fill: color,
         })
-      } else if (vectorType === 'line') {
-        created = new fabric.Rect({
-          left: cx,
-          top: cy,
-          originX: 'center',
-          originY: 'center',
-          width: Math.max(targetW, 220),
-          height: 8,
-          rx: 4,
-          ry: 4,
-          fill: color,
-        })
+      } else if (vectorType === 'line' || vectorType === 'arrow') {
+        created = createVectorLineObject(vectorType, cx, cy, color)
       } else {
         const pathData =
           (vectorType === 'custom-svg' && customSvgPath) ||
@@ -1242,6 +1356,7 @@ export function useFabricCanvas(options: CanvasOptions) {
         ;(created as any).name = `Vetor IA (${vectorType})`
         canvas.add(created)
         canvas.setActiveObject(created)
+        setSelectedObject(created)
         canvas.renderAll()
         syncLayers()
         saveState()
@@ -1265,9 +1380,11 @@ export function useFabricCanvas(options: CanvasOptions) {
       const targetDim = info ? Math.max(280, Math.max(info.width, info.height)) : 420
 
       const pathsToRemove =
-        selectedObject && selectedObject.type === 'path'
+        selectedObject &&
+        selectedObject.type === 'path' &&
+        !(selectedObject as any).customVectorLine?.isVectorLine
           ? [selectedObject]
-          : canvas.getObjects().filter((o) => o.type === 'path')
+          : canvas.getObjects().filter((o) => o.type === 'path' && !(o as any).customVectorLine?.isVectorLine)
       pathsToRemove.forEach((p) => canvas.remove(p))
 
       canvas.isDrawingMode = false
@@ -1295,12 +1412,63 @@ export function useFabricCanvas(options: CanvasOptions) {
   const clearFreehandSketch = useCallback(() => {
     if (!fabricCanvas.current) return
     const canvas = fabricCanvas.current
-    const paths = canvas.getObjects().filter((o) => o.type === 'path')
+    const paths = canvas.getObjects().filter((o) => o.type === 'path' && !(o as any).customVectorLine?.isVectorLine)
     paths.forEach((p) => canvas.remove(p))
     canvas.renderAll()
     syncLayers()
     saveState()
   }, [syncLayers, saveState])
+
+  // Select an object directly from the Layers panel by its canvas zIndex
+  const selectLayer = useCallback(
+    (zIndex: number) => {
+      if (!fabricCanvas.current) return
+      const canvas = fabricCanvas.current
+      const objects = canvas.getObjects()
+      const target = objects[zIndex]
+      if (!target) return
+
+      // Ensure drawing mode is off so selection box is shown
+      if (canvas.isDrawingMode) {
+        canvas.isDrawingMode = false
+        setIsDrawingMode(false)
+      }
+
+      // Allow selecting even background/decorative elements when explicitly clicked in Layers panel
+      if (!target.selectable) {
+        target.set({ selectable: true, evented: true })
+      }
+
+      canvas.setActiveObject(target)
+      setSelectedObject(target)
+      canvas.requestRenderAll()
+      canvas.renderAll()
+      syncLayers()
+    },
+    [syncLayers]
+  )
+
+  // Toggle visibility of a layer from the Layers panel
+  const toggleLayerVisibility = useCallback(
+    (zIndex: number) => {
+      if (!fabricCanvas.current) return
+      const canvas = fabricCanvas.current
+      const target = canvas.getObjects()[zIndex]
+      if (!target) return
+
+      const nextVisible = target.visible === false
+      target.set('visible', nextVisible)
+      if (!nextVisible && canvas.getActiveObject() === target) {
+        canvas.discardActiveObject()
+        setSelectedObject(null)
+      }
+      canvas.requestRenderAll()
+      canvas.renderAll()
+      syncLayers()
+      saveState()
+    },
+    [syncLayers, saveState]
+  )
 
   // Layer ordering & deletion
   const bringForward = useCallback(() => {
@@ -1342,13 +1510,23 @@ export function useFabricCanvas(options: CanvasOptions) {
   const duplicateSelected = useCallback(async () => {
     if (!fabricCanvas.current || !selectedObject) return
     const cloned = await selectedObject.clone()
-    cloned.set({
-      left: (selectedObject.left || 0) + 25,
-      top: (selectedObject.top || 0) + 25,
-      evented: true,
-    })
+    const vecSettings = (selectedObject as any).customVectorLine as VectorLineSettings | undefined
+    if (vecSettings && vecSettings.isVectorLine && cloned instanceof fabric.Path) {
+      const clonedSettings: VectorLineSettings = {
+        ...vecSettings,
+        nodes: vecSettings.nodes.map((pt) => ({ x: pt.x + 30, y: pt.y + 30 })),
+      }
+      rebuildVectorPathGeometry(cloned, clonedSettings)
+    } else {
+      cloned.set({
+        left: (selectedObject.left || 0) + 25,
+        top: (selectedObject.top || 0) + 25,
+        evented: true,
+      })
+    }
     fabricCanvas.current.add(cloned)
     fabricCanvas.current.setActiveObject(cloned)
+    setSelectedObject(cloned)
     fabricCanvas.current.renderAll()
   }, [selectedObject])
 
@@ -2000,30 +2178,14 @@ export function useFabricCanvas(options: CanvasOptions) {
             const srcH = rawEl.naturalHeight || rawEl.height || 600
             ctx.drawImage(rawEl, srcW * 0.04, srcH * 0.04, srcW * 0.62, srcH * 0.68, 0, 0, frameW, frameH)
 
-            // Draw clean & dirty circulation arrows directly inside the zoomed floor plan
-            ctx.save()
-            ctx.strokeStyle = olivePrimary
-            ctx.lineWidth = 6
-            ctx.lineCap = 'round'
-            ctx.lineJoin = 'round'
-            ctx.stroke(new Path2D('M 250 480 L 250 290 L 390 290 M 375 278 L 393 290 L 375 302'))
-            ctx.restore()
-
-            ctx.save()
-            ctx.strokeStyle = '#b86b52'
-            ctx.lineWidth = 6
-            ctx.setLineDash([12, 8])
-            ctx.lineCap = 'round'
-            ctx.lineJoin = 'round'
-            ctx.stroke(new Path2D('M 195 285 L 195 135 M 183 150 L 195 132 L 207 150'))
-            ctx.restore()
-
             ctx.strokeStyle = olivePrimary
             ctx.lineWidth = 7
             ctx.strokeRect(0, 0, frameW, frameH)
 
             const croppedDataUrl = offCanvas.toDataURL('image/png')
             const zoomImg = await fabric.FabricImage.fromURL(croppedDataUrl, { crossOrigin: 'anonymous' })
+            const zoomLeft = 78
+            const zoomTop = Math.round(h * 0.56 - frameH / 2)
             zoomImg.set({
               left: 78 + frameW / 2,
               top: h * 0.56,
@@ -2032,6 +2194,45 @@ export function useFabricCanvas(options: CanvasOptions) {
               shadow: new fabric.Shadow({ color: 'rgba(45,42,38,0.22)', blur: 28, offsetX: 0, offsetY: 12 }),
             })
             canvas.add(zoomImg)
+
+            // Interactive Vector Arrow 1: Fluxo Limpo (3 vector points, editable on canvas)
+            const cleanFlowVec = createCustomVectorLine(
+              {
+                nodes: [
+                  { x: zoomLeft + 250, y: zoomTop + 470 },
+                  { x: zoomLeft + 250, y: zoomTop + 290 },
+                  { x: zoomLeft + 395, y: zoomTop + 290 },
+                ],
+                curvature: 35,
+                strokeWidth: 6,
+                strokeColor: olivePrimary,
+                isDashed: false,
+                hasArrowEnd: true,
+                arrowSize: 20,
+              },
+              'Seta Fluxo Limpo (Vetorial)'
+            )
+            canvas.add(cleanFlowVec)
+
+            // Interactive Vector Arrow 2: Fluxo Sujo (Dashed vector arrow, editable on canvas)
+            const dirtyFlowVec = createCustomVectorLine(
+              {
+                nodes: [
+                  { x: zoomLeft + 195, y: zoomTop + 285 },
+                  { x: zoomLeft + 195, y: zoomTop + 135 },
+                ],
+                curvature: 0,
+                strokeWidth: 6,
+                strokeColor: '#b86b52',
+                isDashed: true,
+                dashLength: 14,
+                dashGap: 10,
+                hasArrowEnd: true,
+                arrowSize: 20,
+              },
+              'Seta Fluxo Sujo (Tracejada)'
+            )
+            canvas.add(dirtyFlowVec)
           }
         } catch {}
       }
@@ -2198,70 +2399,60 @@ export function useFabricCanvas(options: CanvasOptions) {
         } catch {}
       }
 
-      // 7. Curved Callout Arrows & Strictly Bounded Callout Labels on Slide 2 (O Desafio)
+      // 7. Curved Vector Callout Arrows & Strictly Bounded Callout Labels on Slide 2 (O Desafio)
       if (slide.slideType === 'challenge') {
         const callouts = slide.callouts || ['Geometria irregular', 'Ângulos difíceis', 'Múltiplos acessos']
 
-        const arrowCanvas = document.createElement('canvas')
-        arrowCanvas.width = w
-        arrowCanvas.height = h
-        const actx = arrowCanvas.getContext('2d')!
-        actx.strokeStyle = olivePrimary
-        actx.lineWidth = 2.8
-        actx.lineCap = 'round'
-        actx.lineJoin = 'round'
-
-        // Arrow 1: Top-Right ("Geometria irregular")
-        actx.stroke(
-          new Path2D(
-            `M ${w * 0.78} ${h * 0.39} Q ${w * 0.72} ${h * 0.41} ${w * 0.72} ${h * 0.45} M ${w * 0.712} ${h * 0.44} L ${w * 0.72} ${h * 0.452} L ${w * 0.728} ${h * 0.44}`
-          )
-        )
-        // Arrow 2: Right ("Ângulos difíceis")
-        actx.stroke(
-          new Path2D(
-            `M ${w * 0.88} ${h * 0.54} Q ${w * 0.86} ${h * 0.58} ${w * 0.8} ${h * 0.59} M ${w * 0.812} ${h * 0.583} L ${w * 0.798} ${h * 0.59} L ${w * 0.812} ${h * 0.597}`
-          )
-        )
-        // Arrow 3: Left ("Entradas que condicionam a circulação")
-        actx.stroke(
-          new Path2D(
-            `M ${w * 0.13} ${h * 0.56} Q ${w * 0.16} ${h * 0.6} ${w * 0.22} ${h * 0.61} M ${w * 0.208} ${h * 0.602} L ${w * 0.222} ${h * 0.61} L ${w * 0.208} ${h * 0.617}`
-          )
-        )
-        // Arrow 4: Bottom-Left ("Múltiplos acessos")
-        actx.stroke(
-          new Path2D(
-            `M ${w * 0.15} ${h * 0.74} Q ${w * 0.18} ${h * 0.7} ${w * 0.23} ${h * 0.7} M ${w * 0.218} ${h * 0.693} L ${w * 0.232} ${h * 0.7} L ${w * 0.218} ${h * 0.707}`
-          )
-        )
-
-        const dots = [
-          { x: w * 0.72, y: h * 0.462 },
-          { x: w * 0.785, y: h * 0.59 },
-          { x: w * 0.235, y: h * 0.61 },
-          { x: w * 0.245, y: h * 0.7 },
+        const calloutVectors = [
+          {
+            name: 'Seta Geometria Irregular',
+            nodes: [
+              { x: Math.round(w * 0.78), y: Math.round(h * 0.39) },
+              { x: Math.round(w * 0.72), y: Math.round(h * 0.455) },
+            ],
+            curvature: -40,
+          },
+          {
+            name: 'Seta Ângulos Difíceis',
+            nodes: [
+              { x: Math.round(w * 0.88), y: Math.round(h * 0.54) },
+              { x: Math.round(w * 0.795), y: Math.round(h * 0.59) },
+            ],
+            curvature: 38,
+          },
+          {
+            name: 'Seta Circulação',
+            nodes: [
+              { x: Math.round(w * 0.13), y: Math.round(h * 0.56) },
+              { x: Math.round(w * 0.225), y: Math.round(h * 0.61) },
+            ],
+            curvature: -38,
+          },
+          {
+            name: 'Seta Múltiplos Acessos',
+            nodes: [
+              { x: Math.round(w * 0.15), y: Math.round(h * 0.74) },
+              { x: Math.round(w * 0.235), y: Math.round(h * 0.7) },
+            ],
+            curvature: 35,
+          },
         ]
-        for (const d of dots) {
-          actx.fillStyle = '#f5f2eb'
-          actx.beginPath()
-          actx.arc(d.x, d.y, 6, 0, Math.PI * 2)
-          actx.fill()
-          actx.stroke()
-        }
 
-        const arrowImg = await fabric.FabricImage.fromURL(arrowCanvas.toDataURL('image/png'), {
-          crossOrigin: 'anonymous',
+        calloutVectors.forEach((cv) => {
+          const vecArrow = createCustomVectorLine(
+            {
+              nodes: cv.nodes,
+              curvature: cv.curvature,
+              strokeWidth: 4,
+              strokeColor: olivePrimary,
+              isDashed: false,
+              hasArrowEnd: true,
+              arrowSize: 16,
+            },
+            cv.name
+          )
+          canvas.add(vecArrow)
         })
-        arrowImg.set({
-          left: w / 2,
-          top: h / 2,
-          originX: 'center',
-          originY: 'center',
-          selectable: false,
-          evented: false,
-        })
-        canvas.add(arrowImg)
 
         // Bounded Callout Textboxes strictly inside [52..225] (left) and [835..1025] (right)
         addBoundedTextbox(callouts[0] || 'Geometria irregular', {
@@ -2798,6 +2989,7 @@ export function useFabricCanvas(options: CanvasOptions) {
       if (target.json) {
         try {
           await canvas.loadFromJSON(JSON.parse(target.json))
+          hydrateCanvasVectorLines(canvas)
         } catch (e) {
           console.warn('Erro ao carregar JSON da página:', e)
         }
@@ -2830,6 +3022,7 @@ export function useFabricCanvas(options: CanvasOptions) {
     addRectangle,
     addCircle,
     addShape,
+    updateVectorLine,
     addImage,
     replaceSelectedImage,
     getSelectedObjectDataUrl,
@@ -2848,6 +3041,8 @@ export function useFabricCanvas(options: CanvasOptions) {
     replaceSketchWithVector,
     replaceSketchWithImage,
     clearFreehandSketch,
+    selectLayer,
+    toggleLayerVisibility,
     bringForward,
     sendBackward,
     bringToFront,
@@ -2866,6 +3061,7 @@ export function useFabricCanvas(options: CanvasOptions) {
     duplicatePage,
     deletePage,
     reorderPage,
+    renamePage,
     serializeProjectPages,
     loadProjectPages,
   }

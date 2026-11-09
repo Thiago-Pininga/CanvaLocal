@@ -27,6 +27,7 @@ export interface LayerItem {
   locked: boolean
   opacity: number
   zIndex: number
+  selected?: boolean
 }
 
 export interface LMStudioStatus {
@@ -102,6 +103,26 @@ export interface ImageFilterSettings {
   shadow: boolean
   borderWidth: number
   borderColor: string
+}
+
+export interface VectorLineNode {
+  x: number
+  y: number
+}
+
+export interface VectorLineSettings {
+  isVectorLine: true
+  nodes: VectorLineNode[]
+  curvature: number // -100 to 100 for 2 nodes (arch direction/amount), 0 to 200 for 3+ nodes (spline tension %)
+  strokeWidth: number // 1 to 36
+  strokeColor: string
+  isDashed: boolean
+  dashLength: number // 2 to 60
+  dashGap: number // 2 to 60
+  hasArrowEnd: boolean
+  hasArrowStart: boolean
+  arrowSize: number // 10 to 48
+  lineCap: 'round' | 'butt' | 'square'
 }
 
 export interface DesignPaletteOption {

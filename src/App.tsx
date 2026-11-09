@@ -5,6 +5,7 @@ import { Sidebar } from './components/sidebar/Sidebar'
 import { CanvasWorkspace } from './components/canvas/CanvasWorkspace'
 import { MagicWriteModal } from './components/ai/MagicWriteModal'
 import { ComfyConfirmModal } from './components/ai/ComfyConfirmModal'
+import { PhotoEditorStudioModal } from './components/ai/PhotoEditorStudioModal'
 import { ExportModal } from './components/export/ExportModal'
 import { PageManagerBar } from './components/carousel/PageManagerBar'
 import { useFabricCanvas } from './hooks/useFabricCanvas'
@@ -36,6 +37,7 @@ export function App() {
   const [comfyModalOpen, setComfyModalOpen] = useState(false)
   const [comfyModalMode, setComfyModalMode] = useState<'generate' | 'remove-bg'>('generate')
   const [comfyInitialPrompt, setComfyInitialPrompt] = useState('')
+  const [photoStudioImageUrl, setPhotoStudioImageUrl] = useState<string | null>(null)
 
   // LM Studio Status State
   const [lmStudioStatus, setLmStudioStatus] = useState<LMStudioStatus>({ connected: false, models: [] })
@@ -55,10 +57,12 @@ export function App() {
     addRectangle,
     addCircle,
     addShape,
+    updateVectorLine,
     addImage,
     replaceSelectedImage,
     applyGeneratedDesign,
     getSelectedImageBlob,
+    getSelectedObjectDataUrl,
     applyImageFilters,
     applyTextEffect,
     alignSelected,
@@ -76,6 +80,8 @@ export function App() {
     sendBackward,
     bringToFront,
     sendToBack,
+    selectLayer,
+    toggleLayerVisibility,
     deleteSelected,
     duplicateSelected,
     setDimensions,
@@ -89,6 +95,8 @@ export function App() {
     addPage,
     duplicatePage,
     deletePage,
+    reorderPage,
+    renamePage,
     serializeProjectPages,
     loadProjectPages,
   } = useFabricCanvas({
@@ -112,24 +120,42 @@ export function App() {
     projectStorageService.getRecentProjects().then(setRecentProjects)
   }, [checkLMStudio])
 
-  // Save Project to .canvalocal.json file AND store in Top 5 Recent Projects
-  const handleSaveProject = useCallback(async () => {
-    const serialized = serializeProjectPages()
-    const projectObj: SavedProject = {
-      id: projectId,
-      title,
-      updatedAt: new Date().toISOString(),
-      preset: currentPreset,
-      pages: serialized.pages,
-      activePageIndex: serialized.activePageIndex,
-      thumbnail: serialized.thumbnail,
-    }
+  // Save Project: updates the existing file in-place (if already linked) or updates Recent Projects in-place
+  const handleSaveProject = useCallback(
+    async (forceSaveAsNewFile = false) => {
+      const serialized = serializeProjectPages()
+      const projectObj: SavedProject = {
+        id: projectId,
+        title,
+        updatedAt: new Date().toISOString(),
+        preset: currentPreset,
+        pages: serialized.pages,
+        activePageIndex: serialized.activePageIndex,
+        thumbnail: serialized.thumbnail,
+      }
 
-    const updatedRecents = await projectStorageService.saveProject(projectObj, true)
-    setRecentProjects(updatedRecents)
-    setSaveToast(`Projeto "${title}" salvo em arquivo e nos recentes!`)
-    setTimeout(() => setSaveToast(null), 3500)
-  }, [projectId, title, currentPreset, serializeProjectPages])
+      const result = await projectStorageService.saveProject(projectObj, true, forceSaveAsNewFile)
+      if (result.recentProjects.length > 0) {
+        const matched = result.recentProjects.find(
+          (p) => p.id === projectId || p.title.trim().toLowerCase() === title.trim().toLowerCase()
+        )
+        if (matched && matched.id !== projectId) {
+          setProjectId(matched.id)
+        }
+        setRecentProjects(result.recentProjects)
+      }
+
+      if (result.updatedExistingFile) {
+        setSaveToast(`Arquivo "${result.fileName || title}" atualizado com sucesso!`)
+      } else if (result.updatedInRecentsOnly) {
+        setSaveToast(`Projeto "${title}" atualizado nos Projetos Recentes!`)
+      } else {
+        setSaveToast(`Projeto "${title}" salvo em "${result.fileName || title}" e nos recentes!`)
+      }
+      setTimeout(() => setSaveToast(null), 3500)
+    },
+    [projectId, title, currentPreset, serializeProjectPages]
+  )
 
   // Load a recent project or imported project file
   const handleLoadProject = useCallback(
@@ -164,14 +190,28 @@ export function App() {
       try {
         const proj = await projectStorageService.importProjectFromFile(file)
         await handleLoadProject(proj)
-        const updated = await projectStorageService.saveProject(proj, false)
-        setRecentProjects(updated)
+        const result = await projectStorageService.saveProject(proj, false)
+        setRecentProjects(result.recentProjects)
       } catch (err: any) {
         alert(`Erro ao abrir projeto: ${err.message || 'Arquivo inválido'}`)
       }
     },
     [handleLoadProject]
   )
+
+  const handleOpenProjectWithPicker = useCallback(async (): Promise<boolean> => {
+    try {
+      const proj = await projectStorageService.openProjectWithFilePicker()
+      if (!proj) return false
+      await handleLoadProject(proj)
+      const result = await projectStorageService.saveProject(proj, false)
+      setRecentProjects(result.recentProjects)
+      return true
+    } catch (err: any) {
+      alert(`Erro ao abrir projeto: ${err.message || 'Arquivo inválido'}`)
+      return true
+    }
+  }, [handleLoadProject])
 
   // Change Canvas Preset
   const handleSelectPreset = (preset: CanvasPreset) => {
@@ -300,16 +340,24 @@ export function App() {
         onLoadProject={handleLoadProject}
         onDeleteRecentProject={handleDeleteRecentProject}
         onImportProjectFile={handleImportProjectFile}
+        onOpenProjectWithPicker={handleOpenProjectWithPicker}
       />
 
       {/* Contextual Canva Pro Toolbar */}
       <TopToolbar
         selectedObject={selectedObject}
         onOpenMagicWrite={() => setIsMagicWriteOpen(true)}
+        onOpenPhotoEditorStudio={() => {
+          const dataUrl = getSelectedObjectDataUrl()
+          if (dataUrl) {
+            setPhotoStudioImageUrl(dataUrl)
+          }
+        }}
         onRequestComfyRemoveBg={handleRequestComfyRemoveBg}
         onRequestComfyGenerateImage={() => handleRequestComfyGenerate('')}
         onApplyImageFilters={applyImageFilters}
         onApplyTextEffect={applyTextEffect}
+        onUpdateVectorLine={updateVectorLine}
         onAlignSelected={alignSelected}
         onToggleGroup={toggleGroupSelected}
         onToggleLock={toggleLockSelected}
@@ -338,6 +386,8 @@ export function App() {
           canvasBackgroundColor={canvasBg}
           lmStudioStatus={lmStudioStatus}
           layers={layers}
+          onSelectLayer={selectLayer}
+          onToggleLayerVisibility={toggleLayerVisibility}
           onDeleteLayer={deleteSelected}
           onBringForward={bringForward}
           onSendBackward={sendBackward}
@@ -373,6 +423,20 @@ export function App() {
         onAddPage={addPage}
         onDuplicatePage={duplicatePage}
         onDeletePage={deletePage}
+        onReorderPage={reorderPage}
+        onRenamePage={renamePage}
+      />
+
+      {/* Photo Editor Studio Modal (Freehand Highlighting + AI Edit/Crop/Erase) */}
+      <PhotoEditorStudioModal
+        isOpen={Boolean(photoStudioImageUrl)}
+        initialImageUrl={photoStudioImageUrl}
+        onClose={() => setPhotoStudioImageUrl(null)}
+        onApplyEditedImage={async (newImageUrl) => {
+          await replaceSelectedImage(newImageUrl)
+          setSaveToast('Foto editada no Estúdio IA e atualizada na página!')
+          setTimeout(() => setSaveToast(null), 3500)
+        }}
       />
 
       {/* On-Demand ComfyUI Confirmation & Generation Modal */}

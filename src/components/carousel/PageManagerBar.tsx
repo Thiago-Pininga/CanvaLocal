@@ -1,5 +1,17 @@
 import React, { useState } from 'react'
-import { Plus, Copy, Trash2, ChevronLeft, ChevronRight, Layers, GripVertical, ArrowLeft, ArrowRight } from 'lucide-react'
+import {
+  Plus,
+  Copy,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  GripVertical,
+  ArrowLeft,
+  ArrowRight,
+  Pencil,
+  Check,
+} from 'lucide-react'
 import type { PageData } from '../../hooks/useFabricCanvas'
 
 interface PageManagerBarProps {
@@ -10,6 +22,7 @@ interface PageManagerBarProps {
   onDuplicatePage: (index: number) => void
   onDeletePage: (index: number) => void
   onReorderPage: (fromIndex: number, toIndex: number) => void
+  onRenamePage: (index: number, newTitle: string) => void
 }
 
 export const PageManagerBar: React.FC<PageManagerBarProps> = ({
@@ -20,9 +33,24 @@ export const PageManagerBar: React.FC<PageManagerBarProps> = ({
   onDuplicatePage,
   onDeletePage,
   onReorderPage,
+  onRenamePage,
 }) => {
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [editingValue, setEditingValue] = useState<string>('')
+
+  const startEditingPage = (idx: number, currentTitle: string) => {
+    setEditingIdx(idx)
+    setEditingValue(currentTitle)
+  }
+
+  const commitEditingPage = (idx: number) => {
+    if (editingIdx === idx) {
+      onRenamePage(idx, editingValue)
+      setEditingIdx(null)
+    }
+  }
 
   return (
     <div className="h-14 bg-slate-950 border-t border-slate-800 px-4 flex items-center justify-between z-30 select-none">
@@ -110,10 +138,62 @@ export const PageManagerBar: React.FC<PageManagerBarProps> = ({
                 style={{ backgroundColor: p.backgroundColor || '#ffffff' }}
               />
 
-              <span className="truncate max-w-[90px]">{p.title}</span>
+              {editingIdx === idx ? (
+                <div
+                  className="flex items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="text"
+                    value={editingValue}
+                    onChange={(e) => setEditingValue(e.target.value)}
+                    onBlur={() => commitEditingPage(idx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitEditingPage(idx)
+                      else if (e.key === 'Escape') setEditingIdx(null)
+                    }}
+                    autoFocus
+                    className="w-28 bg-slate-950 text-white px-1.5 py-0.5 rounded border border-purple-500 text-xs outline-none font-normal"
+                  />
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      commitEditingPage(idx)
+                    }}
+                    className="p-0.5 rounded bg-emerald-600/30 text-emerald-300 hover:bg-emerald-600/50"
+                    title="Confirmar nome da página"
+                  >
+                    <Check className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <span
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    startEditingPage(idx, p.title)
+                  }}
+                  title="Duplo clique para renomear a página"
+                  className="truncate max-w-[110px]"
+                >
+                  {p.title}
+                </span>
+              )}
 
-              {/* Reorder, Duplicate & Delete buttons inside tab on hover */}
+              {/* Rename, Reorder, Duplicate & Delete buttons inside tab on hover */}
               <div className="flex items-center gap-0.5 ml-1 opacity-0 group-hover:opacity-100 transition">
+                {editingIdx !== idx && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      startEditingPage(idx, p.title)
+                    }}
+                    className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-purple-300"
+                    title="Renomear página"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
                 {idx > 0 && (
                   <button
                     onClick={(e) => {

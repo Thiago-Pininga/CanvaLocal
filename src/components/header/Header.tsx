@@ -31,11 +31,12 @@ interface HeaderProps {
   onRefreshLMStudio: () => void
   onSelectLMStudioModel?: (modelId: string) => void
   onOpenExport: () => void
-  onSaveProject: () => void
+  onSaveProject: (forceSaveAsNewFile?: boolean) => void
   recentProjects: SavedProject[]
   onLoadProject: (project: SavedProject) => void
   onDeleteRecentProject: (id: string) => void
   onImportProjectFile: (file: File) => void
+  onOpenProjectWithPicker?: () => Promise<boolean>
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -58,6 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLoadProject,
   onDeleteRecentProject,
   onImportProjectFile,
+  onOpenProjectWithPicker,
 }) => {
   const [showPresets, setShowPresets] = useState(false)
   const [showModels, setShowModels] = useState(false)
@@ -160,8 +162,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Save Project Button (Ctrl + S) */}
         <button
-          onClick={onSaveProject}
-          title="Salvar Projeto em Arquivo (Ctrl + S)"
+          onClick={() => onSaveProject(false)}
+          title="Salvar / Atualizar Projeto Existente (Ctrl + S)"
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-300 border border-emerald-500/30 text-xs font-medium transition"
         >
           <Save className="w-3.5 h-3.5" />
@@ -201,13 +203,35 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                   Últimos 5 Projetos
                 </span>
-                <button
-                  onClick={() => projectFileInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[11px] text-purple-400 hover:text-purple-300 font-medium"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Abrir Arquivo...</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      onSaveProject(true)
+                      setShowRecent(false)
+                    }}
+                    className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-medium"
+                    title="Escolher local no PC para salvar/vincular um arquivo .canvalocal.json"
+                  >
+                    <Save className="w-3 h-3" />
+                    <span>Salvar Como...</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (onOpenProjectWithPicker) {
+                        const handled = await onOpenProjectWithPicker()
+                        if (handled) {
+                          setShowRecent(false)
+                          return
+                        }
+                      }
+                      projectFileInputRef.current?.click()
+                    }}
+                    className="flex items-center gap-1 text-[11px] text-purple-400 hover:text-purple-300 font-medium"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span>Abrir Arquivo...</span>
+                  </button>
+                </div>
               </div>
 
               {recentProjects.length === 0 ? (

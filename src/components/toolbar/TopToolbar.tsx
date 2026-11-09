@@ -22,15 +22,25 @@ import {
   CaseUpper,
 } from 'lucide-react'
 import * as fabric from 'fabric'
-import type { ImageFilterSettings } from '../../types'
+import type { ImageFilterSettings, VectorLineSettings } from '../../types'
+import { Plus, Minus, Spline, MoveRight, MoveLeft } from 'lucide-react'
 
 interface TopToolbarProps {
   selectedObject: fabric.FabricObject | null
   onOpenMagicWrite: () => void
+  onOpenPhotoEditorStudio: () => void
   onRequestComfyRemoveBg: () => void
   onRequestComfyGenerateImage: () => void
   onApplyImageFilters: (settings: Partial<ImageFilterSettings>) => void
   onApplyTextEffect: (effect: 'none' | 'shadow' | 'neon' | 'hollow' | 'outline' | 'lift') => void
+  onUpdateVectorLine: (
+    actionOrSettings:
+      | Partial<VectorLineSettings>
+      | 'add-node'
+      | 'remove-node'
+      | 'straighten'
+      | 'curve-preset'
+  ) => void
   onAlignSelected: (alignment: 'left' | 'center-h' | 'right' | 'top' | 'center-v' | 'bottom') => void
   onToggleGroup: () => void
   onToggleLock: () => void
@@ -56,10 +66,12 @@ const FONTS = [
 export const TopToolbar: React.FC<TopToolbarProps> = ({
   selectedObject,
   onOpenMagicWrite,
+  onOpenPhotoEditorStudio,
   onRequestComfyRemoveBg,
   onRequestComfyGenerateImage,
   onApplyImageFilters,
   onApplyTextEffect,
+  onUpdateVectorLine,
   onAlignSelected,
   onToggleGroup,
   onToggleLock,
@@ -71,6 +83,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   const [showPhotoStudio, setShowPhotoStudio] = useState(false)
   const [showTextEffects, setShowTextEffects] = useState(false)
   const [showAlignMenu, setShowAlignMenu] = useState(false)
+  const [ forceTick, setForceTick ] = useState(0)
 
   if (!selectedObject) {
     return (
@@ -92,10 +105,29 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
     )
   }
 
-  const isText = selectedObject instanceof fabric.IText || (selectedObject as any).type === 'i-text'
+  const isText =
+    selectedObject instanceof fabric.IText ||
+    selectedObject instanceof fabric.Textbox ||
+    (selectedObject as any).type === 'i-text' ||
+    (selectedObject as any).type === 'textbox'
   const isImage = selectedObject instanceof fabric.FabricImage || (selectedObject as any).type === 'image'
+  const vectorLineSettings = (selectedObject as any).customVectorLine as VectorLineSettings | undefined
+  const isVectorLine = Boolean(vectorLineSettings?.isVectorLine)
   const isMultiOrGroup = selectedObject.type === 'activeselection' || selectedObject.type === 'group'
   const isLocked = Boolean(selectedObject.lockMovementX)
+  void forceTick
+
+  const applyVecChange = (
+    update:
+      | Partial<VectorLineSettings>
+      | 'add-node'
+      | 'remove-node'
+      | 'straighten'
+      | 'curve-preset'
+  ) => {
+    onUpdateVectorLine(update)
+    setForceTick((t) => t + 1)
+  }
 
   const filterMeta: ImageFilterSettings = (selectedObject as any).customFilterMeta || {
     brightness: 0,
@@ -111,28 +143,50 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
   const handleOpacityChange = (val: number) => {
     selectedObject.set('opacity', val / 100)
+    selectedObject.canvas?.requestRenderAll()
     selectedObject.canvas?.renderAll()
+    setForceTick((t) => t + 1)
   }
 
   const handleFlipX = () => {
     selectedObject.set('flipX', !selectedObject.flipX)
     selectedObject.canvas?.renderAll()
+    setForceTick((t) => t + 1)
   }
 
   const handleFlipY = () => {
     selectedObject.set('flipY', !selectedObject.flipY)
     selectedObject.canvas?.renderAll()
+    setForceTick((t) => t + 1)
   }
 
   const handleColorChange = (color: string) => {
     selectedObject.set('fill', color)
     selectedObject.canvas?.renderAll()
+    setForceTick((t) => t + 1)
+  }
+
+  const applyFilterChange = (settings: Partial<ImageFilterSettings>) => {
+    onApplyImageFilters(settings)
+    setForceTick((t) => t + 1)
   }
 
   return (
     <div className="h-11 border-b border-slate-800 bg-slate-900 px-4 flex items-center justify-between text-xs select-none z-20 relative">
       {/* Left: Context-Specific Tools */}
       <div className="flex items-center gap-2">
+        {/* Universal "Editar Foto (IA & Destaque)" Button for Images and Visual Objects (except vector lines) */}
+        {!isText && !isVectorLine && (
+          <button
+            onClick={onOpenPhotoEditorStudio}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold shadow-md shadow-purple-600/20 transition"
+            title="Abrir Estúdio de Edição de Foto com IA e Destaque à Mão Livre"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Editar Foto (IA & Destaque)</span>
+          </button>
+        )}
+
         {/* IMAGE TOOLS (CANVA PRO PHOTO STUDIO) */}
         {isImage && (
           <div className="flex items-center gap-2">
@@ -147,7 +201,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>Editar Foto & Filtros</span>
+                <span>Ajustes & Filtros</span>
               </button>
 
               {showPhotoStudio && (
@@ -156,7 +210,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                     <span className="font-bold text-white text-xs">Estúdio de Foto (Canva Pro)</span>
                     <button
                       onClick={() =>
-                        onApplyImageFilters({
+                        applyFilterChange({
                           brightness: 0,
                           contrast: 0,
                           saturation: 0,
@@ -191,7 +245,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                       ].map((f) => (
                         <button
                           key={f.id}
-                          onClick={() => onApplyImageFilters({ preset: f.id as any })}
+                          onClick={() => applyFilterChange({ preset: f.id as any })}
                           className={`py-1.5 px-1 rounded-lg border text-[10px] font-medium transition ${
                             filterMeta.preset === f.id
                               ? 'bg-purple-600/30 border-purple-500 text-purple-200'
@@ -216,7 +270,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         min={-60}
                         max={60}
                         value={filterMeta.brightness}
-                        onChange={(e) => onApplyImageFilters({ brightness: Number(e.target.value) })}
+                        onChange={(e) => applyFilterChange({ brightness: Number(e.target.value) })}
                         className="w-full accent-purple-500"
                       />
                     </div>
@@ -231,7 +285,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         min={-60}
                         max={60}
                         value={filterMeta.contrast}
-                        onChange={(e) => onApplyImageFilters({ contrast: Number(e.target.value) })}
+                        onChange={(e) => applyFilterChange({ contrast: Number(e.target.value) })}
                         className="w-full accent-purple-500"
                       />
                     </div>
@@ -246,7 +300,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         min={-100}
                         max={100}
                         value={filterMeta.saturation}
-                        onChange={(e) => onApplyImageFilters({ saturation: Number(e.target.value) })}
+                        onChange={(e) => applyFilterChange({ saturation: Number(e.target.value) })}
                         className="w-full accent-purple-500"
                       />
                     </div>
@@ -261,7 +315,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         min={0}
                         max={100}
                         value={filterMeta.cornerRadius}
-                        onChange={(e) => onApplyImageFilters({ cornerRadius: Number(e.target.value) })}
+                        onChange={(e) => applyFilterChange({ cornerRadius: Number(e.target.value) })}
                         className="w-full accent-purple-500"
                       />
                     </div>
@@ -270,7 +324,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                   {/* Shadow & Border Toggles */}
                   <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
                     <button
-                      onClick={() => onApplyImageFilters({ shadow: !filterMeta.shadow })}
+                      onClick={() => applyFilterChange({ shadow: !filterMeta.shadow })}
                       className={`flex-1 py-1.5 rounded-lg border text-[11px] font-medium transition ${
                         filterMeta.shadow
                           ? 'bg-purple-600/30 border-purple-500 text-purple-200'
@@ -281,7 +335,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                     </button>
                     <button
                       onClick={() =>
-                        onApplyImageFilters({ borderWidth: filterMeta.borderWidth > 0 ? 0 : 8 })
+                        applyFilterChange({ borderWidth: filterMeta.borderWidth > 0 ? 0 : 8 })
                       }
                       className={`flex-1 py-1.5 rounded-lg border text-[11px] font-medium transition ${
                         filterMeta.borderWidth > 0
@@ -333,6 +387,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
               onChange={(e) => {
                 ;(selectedObject as fabric.IText).set('fontFamily', e.target.value)
                 selectedObject.canvas?.renderAll()
+                setForceTick((t) => t + 1)
               }}
               className="bg-slate-800 text-white px-2.5 py-1 rounded border border-slate-700 outline-none text-xs"
             >
@@ -351,6 +406,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
               onChange={(e) => {
                 ;(selectedObject as fabric.IText).set('fontSize', Number(e.target.value))
                 selectedObject.canvas?.renderAll()
+                setForceTick((t) => t + 1)
               }}
               className="w-14 bg-slate-800 text-white px-2 py-1 rounded border border-slate-700 text-center"
             />
@@ -488,6 +544,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         onChange={(e) => {
                           ;(selectedObject as fabric.IText).set('charSpacing', Number(e.target.value))
                           selectedObject.canvas?.renderAll()
+                          setForceTick((t) => t + 1)
                         }}
                         className="w-full accent-purple-500"
                       />
@@ -506,6 +563,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
                         onChange={(e) => {
                           ;(selectedObject as fabric.IText).set('lineHeight', Number(e.target.value))
                           selectedObject.canvas?.renderAll()
+                          setForceTick((t) => t + 1)
                         }}
                         className="w-full accent-purple-500"
                       />
@@ -526,8 +584,172 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </div>
         )}
 
+        {/* VECTOR LINE & ARROW TOOLS (Draggable Endpoints, Add/Remove Vector Nodes, Curvature & Dash Density) */}
+        {isVectorLine && vectorLineSettings && (
+          <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+            {/* Stroke Color */}
+            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700/70">
+              <span className="text-[10px] text-slate-400">Cor</span>
+              <input
+                type="color"
+                value={vectorLineSettings.strokeColor || '#6366f1'}
+                onChange={(e) => applyVecChange({ strokeColor: e.target.value })}
+                className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
+                title="Cor da Linha / Seta Vetorial"
+              />
+            </div>
+
+            {/* Add / Remove Vector Nodes */}
+            <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700/70">
+              <span className="text-[10px] font-semibold text-emerald-400">
+                Vetores ({vectorLineSettings.nodes.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => applyVecChange('add-node')}
+                className="px-2 py-0.5 rounded bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-500/40 text-emerald-200 font-semibold flex items-center gap-0.5 transition"
+                title="Adicionar mais um ponto/vetor na linha ou seta para curvar"
+              >
+                <Plus className="w-3 h-3" />
+                <span>+ Vetor</span>
+              </button>
+              <button
+                type="button"
+                disabled={vectorLineSettings.nodes.length <= 2}
+                onClick={() => applyVecChange('remove-node')}
+                className="p-1 rounded bg-slate-700 hover:bg-rose-500/30 text-slate-300 hover:text-rose-200 disabled:opacity-30 transition"
+                title="Remover último vetor intermediário"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => applyVecChange('straighten')}
+                className="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-[10px] text-slate-300 transition"
+                title="Tornar linha reta de 2 pontos"
+              >
+                Reta
+              </button>
+            </div>
+
+            {/* Curvature Accentuation Slider */}
+            <div className="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-purple-500/30">
+              <Spline className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <span className="text-[10px] text-purple-200 font-medium whitespace-nowrap">
+                Curva:
+              </span>
+              <input
+                type="range"
+                min={vectorLineSettings.nodes.length === 2 ? -100 : 0}
+                max={vectorLineSettings.nodes.length === 2 ? 100 : 200}
+                value={vectorLineSettings.curvature}
+                onChange={(e) => applyVecChange({ curvature: Number(e.target.value) })}
+                className="w-20 accent-purple-500"
+                title="Determinar o quão acentuada deve ser a curva"
+              />
+              <span className="font-mono text-[10px] text-purple-300 w-9 text-right">
+                {vectorLineSettings.curvature}%
+              </span>
+            </div>
+
+            {/* Dashed Toggle + Dash Length & Gap Sliders ("Quão tracejado deve ser") */}
+            <div className="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-sky-500/30">
+              <button
+                type="button"
+                onClick={() => applyVecChange({ isDashed: !vectorLineSettings.isDashed })}
+                className={`px-2 py-0.5 rounded font-semibold text-[10px] border transition ${
+                  vectorLineSettings.isDashed
+                    ? 'bg-sky-500/25 border-sky-400 text-sky-200'
+                    : 'bg-slate-700/70 border-slate-600 text-slate-300 hover:text-white'
+                }`}
+                title="Ativar / Desativar Linha Tracejada"
+              >
+                {vectorLineSettings.isDashed ? ' - - Tracejado' : '── Sólida'}
+              </button>
+
+              {vectorLineSettings.isDashed && (
+                <>
+                  <div className="flex items-center gap-1" title="Tamanho de cada traço">
+                    <span className="text-[10px] text-slate-400">Traço:</span>
+                    <input
+                      type="range"
+                      min={2}
+                      max={50}
+                      value={vectorLineSettings.dashLength}
+                      onChange={(e) => applyVecChange({ dashLength: Number(e.target.value) })}
+                      className="w-14 accent-sky-400"
+                    />
+                    <span className="font-mono text-[10px] text-sky-300 w-6">
+                      {vectorLineSettings.dashLength}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1" title="Espaçamento entre os traços (quão tracejado)">
+                    <span className="text-[10px] text-slate-400">Espaço:</span>
+                    <input
+                      type="range"
+                      min={2}
+                      max={50}
+                      value={vectorLineSettings.dashGap}
+                      onChange={(e) => applyVecChange({ dashGap: Number(e.target.value) })}
+                      className="w-14 accent-sky-400"
+                    />
+                    <span className="font-mono text-[10px] text-sky-300 w-6">
+                      {vectorLineSettings.dashGap}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Stroke Width & Arrowheads */}
+            <div className="flex items-center gap-1.5 bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700/70">
+              <span className="text-[10px] text-slate-400">Espessura:</span>
+              <input
+                type="range"
+                min={2}
+                max={28}
+                value={vectorLineSettings.strokeWidth}
+                onChange={(e) => applyVecChange({ strokeWidth: Number(e.target.value) })}
+                className="w-14 accent-indigo-500"
+              />
+              <span className="font-mono text-[10px] text-slate-300 w-6">
+                {vectorLineSettings.strokeWidth}px
+              </span>
+
+              <div className="h-3.5 w-px bg-slate-700 mx-0.5" />
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyVecChange({ hasArrowStart: !vectorLineSettings.hasArrowStart })
+                }
+                className={`p-1 rounded border transition ${
+                  vectorLineSettings.hasArrowStart
+                    ? 'bg-indigo-600/30 border-indigo-400 text-indigo-200'
+                    : 'bg-slate-700/60 border-slate-600 text-slate-400 hover:text-white'
+                }`}
+                title="Ponta de Seta no Início"
+              >
+                <MoveLeft className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => applyVecChange({ hasArrowEnd: !vectorLineSettings.hasArrowEnd })}
+                className={`p-1 rounded border transition ${
+                  vectorLineSettings.hasArrowEnd
+                    ? 'bg-indigo-600/30 border-indigo-400 text-indigo-200'
+                    : 'bg-slate-700/60 border-slate-600 text-slate-400 hover:text-white'
+                }`}
+                title="Ponta de Seta no Fim"
+              >
+                <MoveRight className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* SHAPE / ELEMENT TOOLS */}
-        {!isText && !isImage && (
+        {!isText && !isImage && !isVectorLine && (
           <div className="flex items-center gap-2">
             <label className="text-slate-400 text-[11px]">Cor:</label>
             <input
@@ -627,16 +849,19 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
         </div>
 
         {/* Opacity */}
-        <div className="flex items-center gap-1.5 bg-slate-800/70 px-2 py-1 rounded border border-slate-700/50">
+        <div className="flex items-center gap-1.5 bg-slate-800/70 px-2.5 py-1 rounded-lg border border-slate-700/50">
           <span className="text-[10px] text-slate-400">Opacidade</span>
           <input
             type="range"
-            min={10}
+            min={0}
             max={100}
             value={Math.round((selectedObject.opacity ?? 1) * 100)}
             onChange={(e) => handleOpacityChange(Number(e.target.value))}
-            className="w-16 accent-purple-500"
+            className="w-20 accent-purple-500 cursor-pointer"
           />
+          <span className="font-mono text-[10px] text-purple-300 w-8 text-right">
+            {Math.round((selectedObject.opacity ?? 1) * 100)}%
+          </span>
         </div>
 
         {/* Layer Up / Down */}
