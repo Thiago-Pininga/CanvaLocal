@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #0f1117;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1a1d26;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e3446;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475069;
+}
+
+/* Checkerboard pattern for transparent canvas preview */
+.canvas-checkerboard {
+  background-image: 
+    linear-gradient(45deg, #1f2330 25%, transparent 25%), 
+    linear-gradient(-45deg, #1f2330 25%, transparent 25%), 
+    linear-gradient(45deg, transparent 75%, #1f2330 75%), 
+    linear-gradient(-45deg, transparent 75%, #1f2330 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background-color: #171a23;
+}

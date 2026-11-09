@@ -1,0 +1,36 @@
+{
+  "name": "canvalocal",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "postinstall": "node -e \"const fs = require('fs'), path = require('path'); const src = path.join('node_modules', '@rollup', 'wasm-node', 'dist'); const dest = path.join('node_modules', 'rollup', 'dist'); if (fs.existsSync(src) && fs.existsSync(dest)) fs.cpSync(src, dest, { recursive: true, force: true });\""
+  },
+  "dependencies": {
+    "@rollup/wasm-node": "^4.68.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "canvas-confetti": "^1.9.4",
+    "fabric": "^7.4.0",
+    "lucide-react": "^1.70.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5"
+  },
+  "overrides": {
+    "rollup": "npm:@rollup/wasm-node"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "oxlint": "^1.90.0",
+    "typescript": "~7.0.2",
+    "vite": "^6.4.6"
+  }
+}
